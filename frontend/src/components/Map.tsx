@@ -1,7 +1,22 @@
 import { useEffect, useState } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, Popup } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import type { RouteData } from '../services/api'
 
+function MapBounds({ routeData }: { routeData?: RouteData }) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (routeData && routeData.coordinates && routeData.coordinates.length > 0) {
+      const bounds = L.latLngBounds(routeData.coordinates as [number, number][])
+      map.fitBounds(bounds, { padding: [50, 50] })
+    } else if (routeData?.source_coords) {
+      map.setView([routeData.source_coords[0], routeData.source_coords[1]], map.getZoom())
+    }
+  }, [routeData, map])
+
+  return null
+}
 
 export function Map({
   center = [0, 0],
@@ -30,6 +45,7 @@ export function Map({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; OpenStreetMap contributors'
       />
+      <MapBounds routeData={routeData} />
 
       {routeData && routeData.coordinates && routeData.coordinates.length > 0 && (
         <>

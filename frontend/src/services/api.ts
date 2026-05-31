@@ -19,14 +19,21 @@ export interface RouteData {
 
 export const apiClient = {
   async findRoute(country: string, city: string, source: string, target: string): Promise<RouteData> {
-    const response = await api.post('/route', {
-      country,
-      city,
-      source,
-      target,
-      use_cache: true,
-    })
-    return response.data
+    try {
+      const response = await api.post('/route', {
+        country,
+        city,
+        source,
+        target,
+        use_cache: true,
+      })
+      return response.data
+    } catch (error: any) {
+      if (error.response?.data?.detail) {
+        throw new Error(error.response.data.detail)
+      }
+      throw error
+    }
   },
 
   async healthCheck() {

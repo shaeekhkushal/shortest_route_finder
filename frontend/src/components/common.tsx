@@ -70,9 +70,11 @@ export function Input({
 
 export function Loading({ message = 'Loading...' }: { message?: string }) {
   return (
-    <div className="flex items-center justify-center">
+    <div className="flex flex-col items-center justify-center">
       <div className="text-center">
-        <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-gray-300 border-t-blue-500 dark:border-gray-600 dark:border-t-blue-400"></div>
+        <div className="mx-auto mb-6 flex justify-center">
+          <span className="loader block drop-shadow-md"></span>
+        </div>
         <p className="text-gray-600 dark:text-gray-400">{message}</p>
       </div>
     </div>

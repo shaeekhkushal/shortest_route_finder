@@ -76,26 +76,6 @@ def save_graph_to_cache(G: nx.Graph, cache_file: str) -> None:
     except Exception as e:
         print(f"Warning: Could not save cache: {e}")
 
-def get_global_graph(city: str, country: str, cache: bool = True) -> nx.Graph:
-    query = f"{city}, {country}"
-    cache_file = get_cache_key(query)
-    
-    if cache:
-        G = load_graph_from_cache(cache_file)
-        if G is not None:
-            return G
-    
-    try:
-        G = ox.graph_from_place(query, network_type=NETWORK_TYPE, simplify=True)
-        G = nx.Graph(G)
-        
-        if cache:
-            save_graph_to_cache(G, cache_file)
-        
-        return G
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch map data for {query}: {str(e)}")
-
 def parse_location_global(location: str, city: str, country: str) -> Tuple[float, float]:
     try:
         parts = location.split(",")
@@ -106,12 +86,77 @@ def parse_location_global(location: str, city: str, country: str) -> Tuple[float
     except (ValueError, IndexError):
         pass
     
+    query_without_city = f"{location}, {country}"
+    try:
+        lat, lon = ox.geocode(query_without_city)
+        return (lat, lon)
+    except Exception:
+        pass
+
     query = f"{location}, {city}, {country}"
     try:
         lat, lon = ox.geocode(query)
         return (lat, lon)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid location or could not find: {query}")
+        raise HTTPException(status_code=400, detail=f"Invalid location or could not find: {location}")
+
+def get_global_graph(city: str, country: str, source_coords: Tuple[float, float], target_coords: Tuple[float, float], cache: bool = True) -> nx.Graph:
+    lat1, lon1 = source_coords
+    lat2, lon2 = target_coords
+    dist = ox.distance.great_circle(lat1, lon1, lat2, lon2)
+    
+    if dist < 50000:
+        query = f"{city}, {country}"
+        cache_file = get_cache_key(query)
+        
+        if cache:
+            G = load_graph_from_cache(cache_file)
+            if G is not None:
+                return G
+        
+        try:
+            G = ox.graph_from_place(query, network_type=NETWORK_TYPE, simplify=True)
+            G = nx.Graph(G)
+            
+            if cache:
+                save_graph_to_cache(G, cache_file)
+            
+            return G
+        except Exception:
+            pass
+
+    margin = 0.05
+    south = min(lat1, lat2) - margin
+    north = max(lat1, lat2) + margin
+    west = min(lon1, lon2) - margin
+    east = max(lon1, lon2) + margin
+    
+    cache_key_str = f"bbox_{south:.4f}_{north:.4f}_{west:.4f}_{east:.4f}"
+    if dist >= 50000:
+        cache_key_str += "_highways"
+        
+    cache_file = get_cache_key(cache_key_str)
+    
+    if cache:
+        G = load_graph_from_cache(cache_file)
+        if G is not None:
+            return G
+            
+    try:
+        if dist >= 50000:
+            custom_filter = '["highway"~"motorway|trunk|primary"]'
+            G = ox.graph_from_bbox(bbox=(west, south, east, north), custom_filter=custom_filter, simplify=True)
+        else:
+            G = ox.graph_from_bbox(bbox=(west, south, east, north), network_type=NETWORK_TYPE, simplify=True)
+            
+        G = nx.Graph(G)
+        
+        if cache:
+            save_graph_to_cache(G, cache_file)
+        
+        return G
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch map data for area: {str(e)}")
 
 def find_shortest_route(G: nx.Graph, source_coords: Tuple[float, float], 
                        target_coords: Tuple[float, float]) -> dict:
@@ -119,20 +164,8 @@ def find_shortest_route(G: nx.Graph, source_coords: Tuple[float, float],
         source_node = ox.distance.nearest_nodes(G, source_coords[1], source_coords[0])
         target_node = ox.distance.nearest_nodes(G, target_coords[1], target_coords[0])
         
-        route = nx.shortest_path(G, source=source_node, target=target_node, weight="length")
-        
-        route_distance = 0
-        for i in range(len(route) - 1):
-            try:
-                edge_data = G.get_edge_data(route[i], route[i + 1])
-                if isinstance(edge_data, dict):
-                    route_distance += edge_data.get('length', 0)
-                else:
-                    for key, attrs in edge_data.items():
-                        route_distance += attrs.get('length', 0)
-                        break
-            except Exception:
-                pass
+        # Use bidirectional Dijkstra for faster routing
+        route_distance, route = nx.bidirectional_dijkstra(G, source=source_node, target=target_node, weight="length")
         
         route_coords = [
             (G.nodes[node]["y"], G.nodes[node]["x"])
@@ -165,7 +198,7 @@ async def find_route(request: RouteRequest) -> RouteResponse:
         source_coords = parse_location_global(request.source, request.city, request.country)
         target_coords = parse_location_global(request.target, request.city, request.country)
         
-        G = get_global_graph(request.city, request.country, cache=request.use_cache)
+        G = get_global_graph(request.city, request.country, source_coords, target_coords, cache=request.use_cache)
         
         result = find_shortest_route(G, source_coords, target_coords)
         
